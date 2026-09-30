@@ -9,13 +9,23 @@ import re
 import dateparser
 
 SCOPES = ['https://www.googleapis.com/auth/calendar']
-SERVICE_ACCOUNT_FILE = r'C:\Users\Mani\OneDrive\Documents\ai_search_assistant\backend\credentials\service_account.json'
-CALENDAR_ID = 'mamidalamokshithreddy@gmail.com'  # Replace with your Calendar ID if needed
-
-credentials = service_account.Credentials.from_service_account_file(
-    SERVICE_ACCOUNT_FILE, scopes=SCOPES
+# env override → repo-relative default (the old hardcoded Windows path can't exist in prod)
+SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "credentials", "service_account.json"
 )
-service = build('calendar', 'v3', credentials=credentials)
+CALENDAR_ID = os.getenv("CALENDAR_ID") or 'mamidalamokshithreddy@gmail.com'
+
+# Credentials are optional — missing file must not kill the app on boot (deploys).
+credentials = None
+service = None
+if os.path.exists(SERVICE_ACCOUNT_FILE):
+    try:
+        credentials = service_account.Credentials.from_service_account_file(
+            SERVICE_ACCOUNT_FILE, scopes=SCOPES
+        )
+        service = build('calendar', 'v3', credentials=credentials)
+    except Exception:
+        pass
 
 import dateparser
 
