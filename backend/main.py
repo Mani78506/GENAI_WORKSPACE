@@ -588,6 +588,17 @@ async def startup_event():
     logger.info("Starting background scheduler thread...")
     threading.Thread(target=run_scheduler_forever, daemon=True).start()
 
+    # warm the vector index in the background — port binds instantly, first
+    # request doesn't eat the HF model download + index build
+    def _warm_index():
+        try:
+            from backend.rag_pipeline import db as _vdb
+            _vdb.index.ntotal
+            logger.info("Vector index warmed")
+        except Exception as e:
+            logger.warning(f"Index warm-up failed (will retry on first query): {e}")
+    threading.Thread(target=_warm_index, daemon=True).start()
+
     scheduler_status["next_sync"] = (datetime.now() + timedelta(minutes=1)).isoformat()
     logger.info("Scheduler initialized")
 

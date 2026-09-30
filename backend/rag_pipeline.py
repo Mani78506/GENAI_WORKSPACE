@@ -126,13 +126,21 @@ def resolve_tier(requested: str | None, engine: str, query: str, plan: str | Non
     cap = PLAN_MAX_TIER.get(plan or "free", "smart")
     return t if order.index(t) <= order.index(cap) else cap
 
-# Load FAISS Vector Store — build it at boot when missing (fresh deploys / Render)
-EMBED_MODEL = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+# FAISS loads LAZILY on first use — the HF model download + index build must not
+# block uvicorn from binding its port (Render kills slow-to-bind services).
+EMBED_MODEL = None
+
+
+def _embeddings():
+    global EMBED_MODEL
+    if EMBED_MODEL is None:
+        EMBED_MODEL = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    return EMBED_MODEL
 
 
 def _load_or_build_db():
     try:
-        return FAISS.load_local("faiss_index", EMBED_MODEL, allow_dangerous_deserialization=True)
+        return FAISS.load_local("faiss_index", _embeddings(), allow_dangerous_deserialization=True)
     except Exception as e:
         logger.warning(f"No local FAISS index ({e}) — building from sample_docs + uploads")
     try:
@@ -155,17 +163,30 @@ def _load_or_build_db():
 
         if docs:
             chunks = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200).split_documents(docs)
-            store = FAISS.from_documents(chunks, EMBED_MODEL)
+            store = FAISS.from_documents(chunks, _embeddings())
             store.save_local("faiss_index")
             logger.info(f"FAISS built at boot: {len(chunks)} chunks")
             return store
     except Exception as e:
         logger.error(f"FAISS boot-build failed: {e}")
     # last resort: empty store so uploads/queries don't crash
-    return FAISS.from_texts(["GenAI Workspace corpus"], EMBED_MODEL)
+    return FAISS.from_texts(["GenAI Workspace corpus"], _embeddings())
 
 
-db = _load_or_build_db()
+class _LazyFAISS:
+    """Transparent proxy — the real store builds on first access, not at import."""
+    _inst = None
+
+    def _get(self):
+        if self._inst is None:
+            self._inst = _load_or_build_db()
+        return self._inst
+
+    def __getattr__(self, name):
+        return getattr(self._get(), name)
+
+
+db = _LazyFAISS()
 
 # -------- PROMPTS WITH STRUCTURED GUIDANCE -------- #
 # Prompt for point-wise summaries
