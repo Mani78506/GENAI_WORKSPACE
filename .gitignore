@@ -1,0 +1,33 @@
+# secrets — NEVER commit
+.env
+.env.*
+frontend/.env
+passwords.txt
+**/credentials/**
+**/service_account*.json
+**/*.json.backup
+
+# python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# runtime data / DBs / indexes
+users.db
+agent_tasks_log.json
+faiss_index/
+data/uploads/
+data/downloaded_docs/
+backend_server.log
+vite.log
+
+# node / build
+node_modules/
+frontend/dist/
+frontend/node_modules/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log
