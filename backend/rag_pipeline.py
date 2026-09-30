@@ -126,9 +126,46 @@ def resolve_tier(requested: str | None, engine: str, query: str, plan: str | Non
     cap = PLAN_MAX_TIER.get(plan or "free", "smart")
     return t if order.index(t) <= order.index(cap) else cap
 
-# Load FAISS Vector Store
+# Load FAISS Vector Store — build it at boot when missing (fresh deploys / Render)
 EMBED_MODEL = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-db = FAISS.load_local("faiss_index", EMBED_MODEL, allow_dangerous_deserialization=True)
+
+
+def _load_or_build_db():
+    try:
+        return FAISS.load_local("faiss_index", EMBED_MODEL, allow_dangerous_deserialization=True)
+    except Exception as e:
+        logger.warning(f"No local FAISS index ({e}) — building from sample_docs + uploads")
+    try:
+        from backend.load_documents import load_documents
+        from langchain.text_splitter import RecursiveCharacterTextSplitter
+        import json as _j
+
+        docs = load_documents("data/sample_docs") if os.path.isdir("data/sample_docs") else []
+        for d in docs:
+            d.metadata.setdefault("owner", "public")
+        manifest = {}
+        if os.path.isdir("data/uploads"):
+            if os.path.exists("data/uploads/manifest.json"):
+                with open("data/uploads/manifest.json") as mf:
+                    manifest = _j.load(mf)
+            ups = load_documents("data/uploads")
+            for d in ups:
+                d.metadata["owner"] = manifest.get(d.metadata.get("source", ""), "guest")
+            docs.extend(ups)
+
+        if docs:
+            chunks = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200).split_documents(docs)
+            store = FAISS.from_documents(chunks, EMBED_MODEL)
+            store.save_local("faiss_index")
+            logger.info(f"FAISS built at boot: {len(chunks)} chunks")
+            return store
+    except Exception as e:
+        logger.error(f"FAISS boot-build failed: {e}")
+    # last resort: empty store so uploads/queries don't crash
+    return FAISS.from_texts(["GenAI Workspace corpus"], EMBED_MODEL)
+
+
+db = _load_or_build_db()
 
 # -------- PROMPTS WITH STRUCTURED GUIDANCE -------- #
 # Prompt for point-wise summaries
